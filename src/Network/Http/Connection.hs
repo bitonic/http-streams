@@ -29,6 +29,8 @@ module Network.Http.Connection (
     sendRequest,
     receiveResponse,
     receiveResponseRaw,
+    UnexpectedCompression,
+    ResponseBodyTooShort,
     emptyBody,
     fileBody,
     inputStreamBody,

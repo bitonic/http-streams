@@ -22,6 +22,9 @@
 module Network.Http.ResponseParser (
     readResponseHeader,
     readResponseBody,
+    -- * Exceptions
+    UnexpectedCompression,
+    ResponseBodyTooShort,
 
         -- for testing
     readDecimal
@@ -31,7 +34,7 @@ import Prelude hiding (take, takeWhile)
 
 import Control.Applicative
 import Control.Exception (Exception, throwIO)
-import Control.Monad (void)
+import Control.Monad (void, when)
 import Control.Monad.IO.Class (liftIO)
 import Data.Attoparsec.ByteString.Char8
 import Data.Bits (Bits (..))
@@ -40,10 +43,12 @@ import qualified Data.ByteString.Char8 as S
 import Data.CaseInsensitive (mk)
 import Data.Char (ord)
 import Data.Int (Int64)
+import Data.IORef (newIORef, readIORef, writeIORef, modifyIORef')
 import Data.Typeable (Typeable)
 import System.IO.Streams (Generator, InputStream)
 import qualified System.IO.Streams as Streams
 import qualified System.IO.Streams.Attoparsec as Streams
+import qualified System.IO.Streams.Internal as Streams
 
 import Network.Http.Internal
 import Network.Http.Utilities
@@ -259,7 +264,7 @@ transferChunkSize = do
 -}
 readFixedLengthBody :: InputStream ByteString -> Int64 -> IO (InputStream ByteString)
 readFixedLengthBody i1 n = do
-    i2 <- Streams.takeBytes n i1
+    i2 <- takeBytesExactly n i1
     return i2
 
 {-
@@ -279,3 +284,45 @@ readCompressedBody :: InputStream ByteString -> IO (InputStream ByteString)
 readCompressedBody i1 = do
     i2 <- Streams.gunzip i1
     return i2
+
+
+---------------------------------------------------------------------
+-- TODO: remove this when and if
+-- <https://github.com/snapframework/io-streams/pull/17> is merged.
+
+data ResponseBodyTooShort = ResponseBodyTooShort Int64
+    deriving (Typeable)
+
+instance Show ResponseBodyTooShort where
+    show (ResponseBodyTooShort x) =
+      "ResponseBodyTooShort: Short read, expected " ++ show x ++ " bytes"
+
+instance Exception ResponseBodyTooShort
+
+takeBytesExactly
+    :: Int64 -> InputStream ByteString -> IO (InputStream ByteString)
+takeBytesExactly k0 src = do
+    kref <- newIORef k0
+    return $! Streams.InputStream (prod kref) (pb kref)
+  where
+    prod kref = do
+        k <- readIORef kref
+        if k <= 0
+           then return Nothing
+           else Streams.read src >>=
+                maybe (throwIO $ ResponseBodyTooShort k0) (chunk k)
+      where
+        chunk k s = do
+            let l  = fromIntegral $ S.length s
+            let k' = k - l
+            if k' <= 0
+              then let (a,b) = S.splitAt (fromIntegral k) s
+                   in do
+                       when (not $ S.null b) $ Streams.unRead b src
+                       writeIORef kref 0
+                       return $! Just a
+              else writeIORef kref k' >> return (Just s)
+
+    pb kref s = do
+        modifyIORef' kref (+ (fromIntegral $ S.length s))
+        Streams.unRead s src
