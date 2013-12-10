@@ -252,8 +252,7 @@ testChunkedEncoding =
         q <- buildRequest $ do
             http GET "/time"
 
-        sendRequest c q emptyBody
-        receiveResponse c (\p i1 -> do
+        withResponse c q emptyBody (\_ p i1 -> do
             let cm = getHeader p "Transfer-Encoding"
             assertEqual "Should be chunked encoding!" (Just "chunked") cm
 
@@ -271,9 +270,7 @@ testContentLength = do
         q <- buildRequest $ do
             http GET "/static/statler.jpg"
 
-        sendRequest c q emptyBody
-
-        receiveResponse c (\p i1 -> do
+        withResponse c q emptyBody (\_ p i1 -> do
             let nm = getHeader p "Content-Length"
             assertMaybe "Should be a Content-Length header!" nm
 
@@ -302,8 +299,7 @@ testContentLength = do
         c <- fakeConnectionHttp10
         q <- buildRequest $ do
             http GET "/fake"
-        sendRequest c q emptyBody
-        receiveResponse c (\_ i1 -> do
+        withResponse c q emptyBody (\_ _ i1 -> do
             (i2, getCount) <- Streams.countInput i1
             o <- Streams.nullOutput
             Streams.connect i2 o
@@ -339,8 +335,7 @@ testDevoidOfContent = do
         (c, mv) <- fakeConnectionNoContent
         q <- buildRequest $ do
             http GET "/fake"
-        sendRequest c q emptyBody
-        receiveResponse c (\_ i1 -> do
+        withResponse c q emptyBody (\_ _ i1 -> do
             (i2, getCount) <- Streams.countInput i1
             o <- Streams.nullOutput
             Streams.connect i2 o
@@ -389,9 +384,7 @@ testCompressedResponse =
             http GET "/static/hello.html"
             setHeader "Accept-Encoding" "gzip"
 
-        sendRequest c q emptyBody
-
-        receiveResponse c (\p i -> do
+        withResponse c q emptyBody (\_ p i -> do
             let nm = getHeader p "Content-Encoding"
             assertMaybe "Should be a Content-Encoding header!" nm
             assertEqual "Content-Encoding header should be 'gzip'!" (Just "gzip") nm
@@ -421,10 +414,9 @@ testExpectationContinue =
             http PUT "/resource/x149"
             setExpectContinue
 
-        sendRequest c q (\o -> do
-            Streams.write (Just (Builder.fromString "Hello world\n")) o)
-
-        receiveResponse c (\p i -> do
+        let consume o =
+                Streams.write (Just (Builder.fromString "Hello world\n")) o
+        withResponse c q consume (\_ p i -> do
             assertEqual "Incorrect status code" 201 (getStatusCode p)
             x' <- Streams.readExactly 12 i
 
@@ -472,10 +464,9 @@ testSendBodyFor meth =
             http meth "/size"
             setContentType "text/plain"
 
-        sendRequest c q (\o -> do
-            Streams.write (Just (Builder.fromString "a request")) o)
-
-        receiveResponse c (\p i -> do
+        let consume o =
+                Streams.write (Just (Builder.fromString "a request")) o
+        withResponse c q consume (\_ p i -> do
             assertEqual "Incorrect status code" 200 (getStatusCode p)
             (Just b') <- Streams.read i
 
@@ -648,8 +639,7 @@ testEstablishConnection =
                 http GET "/static/statler.jpg"
                     -- TODO be nice if we could replace that with 'url';
                     -- fix the routeRequests function in TestServer maybe?
-            sendRequest c q emptyBody
-            receiveResponse c concatHandler')
+            withResponse c q emptyBody (const concatHandler'))
 
         let len = S.length x'
         assertEqual "Incorrect number of bytes read" 4611 len
