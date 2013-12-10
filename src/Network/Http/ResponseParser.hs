@@ -26,7 +26,7 @@ module Network.Http.ResponseParser (
     UnexpectedCompression,
     ResponseBodyTooShort,
 
-        -- for testing
+    -- for testing
     readDecimal
 ) where
 
