@@ -24,6 +24,8 @@ module Network.Http.Connection (
     getHostname,
     getRequestHeaders,
     getHeadersFull,
+    withResponse,
+    withResponseRaw,
     sendRequest,
     receiveResponse,
     receiveResponseRaw,
@@ -250,6 +252,18 @@ closeSSL s ssl = do
     SSL.shutdown ssl SSL.Unidirectional
     close s
 
+withResponse :: Connection -> Request -> (OutputStream Builder -> IO a)
+             -> (a -> Response -> InputStream ByteString -> IO b)
+             -> IO b
+withResponse c q qHandler pHandler =
+    receiveResponse c q . pHandler =<< sendRequest c q qHandler
+
+withResponseRaw :: Connection -> Request -> (OutputStream Builder -> IO a)
+                -> (a -> Response -> InputStream ByteString -> IO b)
+                -> IO b
+withResponseRaw c q qHandler pHandler =
+    receiveResponseRaw c q . pHandler =<< sendRequest c q qHandler
+
 --
 -- | Having composed a 'Request' object with the headers and metadata for
 -- this connection, you can now send the request to the server, along
@@ -271,7 +285,8 @@ closeSSL s ssl = do
     cases shown here, but those functions take OutputStream ByteString,
     and we are of course working in OutputStream Builder by that point.
 -}
-sendRequest :: Connection -> Request -> (OutputStream Builder -> IO α) -> IO α
+sendRequest :: Connection -> Request -> (OutputStream Builder -> IO α)
+            -> IO α
 sendRequest c q handler = do
     -- write the headers
 
@@ -408,10 +423,10 @@ getHeadersFull c q =
     InputStream ByteString in Connection remains unconsumed beyond the
     threshold of the current response, which is exactly what we need.
 -}
-receiveResponse :: Connection -> (Response -> InputStream ByteString -> IO β) -> IO β
-receiveResponse c handler = do
+receiveResponse :: Connection -> Request -> (Response -> InputStream ByteString -> IO β) -> IO β
+receiveResponse c q handler = do
     p  <- readResponseHeader i
-    i' <- readResponseBody p i
+    i' <- readResponseBody q p i
 
     x  <- handler p i'
 
@@ -430,14 +445,14 @@ receiveResponse c handler = do
 {-
     See notes at receiveResponse.
 -}
-receiveResponseRaw :: Connection -> (Response -> InputStream ByteString -> IO β) -> IO β
-receiveResponseRaw c handler = do
+receiveResponseRaw :: Connection -> Request -> (Response -> InputStream ByteString -> IO β) -> IO β
+receiveResponseRaw c q handler = do
     p  <- readResponseHeader i
     let p' = p {
         pContentEncoding = Identity
     }
 
-    i' <- readResponseBody p' i
+    i' <- readResponseBody q p' i
 
     x  <- handler p i'
 

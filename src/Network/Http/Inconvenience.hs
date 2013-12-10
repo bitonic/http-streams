@@ -311,9 +311,7 @@ getN n r' handler = do
             http GET (path u)
             setAccept "*/*"
 
-        sendRequest c q emptyBody
-
-        receiveResponse c (wrapRedirect u n handler)
+        withResponse c q emptyBody (const (wrapRedirect u n handler))
 
 
 {-
@@ -401,10 +399,7 @@ post r' t body handler = do
             setAccept "*/*"
             setContentType t
 
-        _ <- sendRequest c q body
-
-        x <- receiveResponse c handler
-        return x
+        withResponse c q body (const handler)
 
 
 --
@@ -438,10 +433,7 @@ postForm r' nvs handler = do
             setAccept "*/*"
             setContentType "application/x-www-form-urlencoded"
 
-        _ <- sendRequest c q (encodedFormBody nvs)
-
-        x <- receiveResponse c handler
-        return x
+        withResponse c q (encodedFormBody nvs) (const handler)
 
 
 --
@@ -508,10 +500,7 @@ put r' t body handler = do
             setAccept "*/*"
             setHeader "Content-Type" t
 
-        _ <- sendRequest c q body
-
-        x <- receiveResponse c handler
-        return x
+        withResponse c q body (const handler)
 
 
 --

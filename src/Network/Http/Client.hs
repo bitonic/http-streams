@@ -139,6 +139,9 @@ module Network.Http.Client (
     concatHandler',
     jsonHandler,
 
+    withResponse,
+    withResponseRaw,
+
     -- * Resource cleanup
     closeConnection,
     withConnection,
