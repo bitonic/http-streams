@@ -28,11 +28,9 @@ module Network.Http.Inconvenience (
     baselineContextSSL,
     concatHandler',
     jsonHandler,
-
-    -- for testing
-    TooManyRedirects(..),
-    HttpClientError(..),
-    splitURI
+    TooManyRedirects(..),       -- Constructor used in tests
+    HttpClientError(..),        -- Constructor used in tests
+    splitURI                    -- Used in tests
 ) where
 
 #include "config.h"

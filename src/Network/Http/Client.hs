@@ -139,6 +139,7 @@ module Network.Http.Client (
     debugHandler,
     concatHandler,
     concatHandler',
+    HttpClientError,
     jsonHandler,
 
     withResponse,
@@ -160,6 +161,7 @@ module Network.Http.Client (
     --
     URL,
     get,
+    TooManyRedirects,
     post,
     postForm,
     put,
