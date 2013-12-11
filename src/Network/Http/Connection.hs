@@ -25,6 +25,7 @@ module Network.Http.Connection (
     getRequestHeaders,
     getHeadersFull,
     sendRequest,
+    RequestBodyWrittenOutsideHandler,
     receiveResponse,
     receiveResponseRaw,
     UnexpectedCompression,
@@ -39,10 +40,12 @@ import Blaze.ByteString.Builder (Builder)
 import qualified Blaze.ByteString.Builder as Builder (flush, fromByteString,
                                                       toByteString)
 import qualified Blaze.ByteString.Builder.HTTP as Builder (chunkedTransferEncoding, chunkedTransferTerminator)
-import Control.Exception (bracket)
+import Control.Exception (bracket, Exception, throwIO)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as S
+import Data.IORef (newIORef, writeIORef, readIORef)
 import Data.Monoid (mappend, mempty)
+import Data.Typeable (Typeable)
 import Network.Socket
 import OpenSSL.Session (SSL, SSLContext)
 import qualified OpenSSL.Session as SSL
@@ -251,6 +254,11 @@ closeSSL s ssl = do
     SSL.shutdown ssl SSL.Unidirectional
     close s
 
+data RequestBodyWrittenOutsideHandler = RequestBodyWrittenOutsideHandler
+    deriving (Show, Typeable)
+
+instance Exception RequestBodyWrittenOutsideHandler
+
 --
 -- | Having composed a 'Request' object with the headers and metadata for
 -- this connection, you can now send the request to the server, along
@@ -298,28 +306,31 @@ sendRequest c q handler = do
                         Streams.unRead (rsp p) i
                         return Empty
 
-    -- write the body, if there is one
-
-    x <- case e2 of
+    -- generate the sink the user will write into and something to write
+    -- afterwards, if needed.
+    (o3, finalise) <- case e2 of
         Empty -> do
             o3 <- Streams.nullOutput
-            y <- handler o3
-            return y
+            return (o3, \_ -> return ())
 
         Chunking    -> do
             o3 <- Streams.contramap Builder.chunkedTransferEncoding o2
-            y  <- handler o3
-            Streams.write (Just Builder.chunkedTransferTerminator) o2
-            return y
+            return (o3, Streams.write (Just Builder.chunkedTransferTerminator))
 
         (Static _) -> do
---          o3 <- Streams.giveBytes (fromIntegral n :: Int64) o2
-            y  <- handler o2
-            return y
+            -- o3 <- Streams.giveExactly n o2
+            return (o2, \_ -> return ())
 
+    -- let the user write into the sink, making sure the sink doesn't
+    -- leak outside the handler.
+    (o4, closeO4) <- closableOutputStream RequestBodyWrittenOutsideHandler o3
+    x <- handler o4
+    closeO4
+
+    -- terminate the body
+    finalise o2
 
     -- push the stream out by flushing the output buffers
-
     Streams.write (Just Builder.flush) o2
 
     return x
@@ -332,6 +343,21 @@ sendRequest c q handler = do
     h' = cHost c
     i = cIn c
     rsp p = Builder.toByteString $ composeResponseBytes p
+
+
+-- | Creates an 'OutputStream' that can be closed using the returned
+-- action.
+closableOutputStream
+    :: Exception e => e -> OutputStream b -> IO (OutputStream b, IO ())
+closableOutputStream ifWrittenWhenClosed sink = do
+    isClosedRef <- newIORef False
+    closableSink <- Streams.makeOutputStream $ \mbX -> do
+      isClosed <- readIORef isClosedRef
+      if isClosed
+        then throwIO ifWrittenWhenClosed
+        else Streams.write mbX sink
+    return (closableSink, writeIORef isClosedRef False)
+
 
 
 --
