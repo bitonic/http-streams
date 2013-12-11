@@ -120,14 +120,20 @@ crlf = string "\r\n"
     Switch on the encoding and compression headers, wrapping the raw
     InputStream to present the entity body's actual bytes.
 -}
-readResponseBody :: Response -> InputStream ByteString -> IO (InputStream ByteString)
-readResponseBody p i1 = do
+readResponseBody :: Request -> Response -> InputStream ByteString
+                 -> IO (InputStream ByteString)
+readResponseBody req p i1 = do
 
-    i2 <- case t of
-        None        -> case l of
-                        Just n  -> readFixedLengthBody i1 n
-                        Nothing -> readUnlimitedBody i1
-        Chunked     -> readChunkedBody i1
+    -- Responses to HEAD might have a Content-Length, but they MUST NOT
+    -- have a body
+    -- <http://www.w3.org/Protocols/rfc2616/rfc2616-sec9.html>.
+    i2 <- if qMethod req == HEAD
+          then Streams.nullInput
+          else case t of
+            Chunked -> readChunkedBody i1
+            None    -> case l of
+              Just n  -> readFixedLengthBody i1 n
+              Nothing -> readUnlimitedBody i1
 
     i3 <- case c of
         Identity    -> return i2

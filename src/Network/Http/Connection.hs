@@ -41,10 +41,13 @@ import qualified Blaze.ByteString.Builder as Builder (flush, fromByteString,
                                                       toByteString)
 import qualified Blaze.ByteString.Builder.HTTP as Builder (chunkedTransferEncoding, chunkedTransferTerminator)
 import Control.Exception (bracket, Exception, throwIO)
+-- import Control.Concurrent.
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as S
-import Data.IORef (newIORef, writeIORef, readIORef)
+import Data.IORef (IORef, newIORef, writeIORef, readIORef, atomicModifyIORef')
 import Data.Monoid (mappend, mempty)
+import Data.Sequence (Seq)
+import qualified Data.Sequence as Seq
 import Data.Typeable (Typeable)
 import Network.Socket
 import OpenSSL.Session (SSL, SSLContext)
@@ -61,12 +64,13 @@ import Network.Http.ResponseParser
 --
 data Connection
     = Connection {
-        cHost  :: ByteString,
+        cHost      :: ByteString,
             -- ^ will be used as the Host: header in the HTTP request.
-        cClose :: IO (),
+        cClose     :: IO (),
             -- ^ called when the connection should be closed.
-        cOut   :: OutputStream Builder,
-        cIn    :: InputStream ByteString
+        cOut       :: OutputStream Builder,
+        cIn        :: InputStream ByteString,
+        cReqQueue  :: IORef (Seq Request)
     }
 
 instance Show Connection where
@@ -111,7 +115,8 @@ makeConnection
     -> IO Connection
 makeConnection h c o1 i = do
     o2 <- Streams.builderStream o1
-    return $! Connection h c o2 i
+    reqQueue <-  newIORef Seq.empty
+    return $! Connection h c o2 i reqQueue
 
 
 --
@@ -174,14 +179,7 @@ openConnection h1' p = do
     connect s a
     (i,o1) <- Streams.socketToStreams s
 
-    o2 <- Streams.builderStream o1
-
-    return Connection {
-        cHost  = h2',
-        cClose = close s,
-        cOut   = o2,
-        cIn    = i
-    }
+    makeConnection h2' (close s) o1 i
   where
     hints = defaultHints {addrFlags = [AI_ADDRCONFIG, AI_NUMERICSERV]}
     h2' = if p == 80
@@ -234,14 +232,7 @@ openConnectionSSL ctx h1' p = do
 
     (i,o1) <- Streams.sslToStreams ssl
 
-    o2 <- Streams.builderStream o1
-
-    return Connection {
-        cHost  = h2',
-        cClose = closeSSL s ssl,
-        cOut   = o2,
-        cIn    = i
-    }
+    makeConnection h2' (close s) o1 i
   where
     h2' :: ByteString
     h2' = if p == 443
@@ -327,6 +318,9 @@ sendRequest c q handler = do
     x <- handler o4
     closeO4
 
+    -- record that we have sent this request
+    atomicModifyIORef' (cReqQueue c) $ \qs -> (q Seq.<| qs, ())
+
     -- terminate the body
     finalise o2
 
@@ -404,6 +398,21 @@ getHeadersFull c q =
     h  = qHeaders q
     h' = updateHeader h "Host" (getHostname c q)
 
+data NoPreviousRequest = NoPreviousRequest
+    deriving (Show, Typeable)
+
+instance Exception NoPreviousRequest
+
+previousRequest :: Connection -> IO Request
+previousRequest c = do
+    -- Try to get the oldest request, which we will pair up with this
+    -- response.
+    mbQ <- atomicModifyIORef' (cReqQueue c) $ \qs ->
+             case Seq.viewr qs of
+               Seq.EmptyR   -> (qs , Nothing)
+               qs' Seq.:> q -> (qs', Just q )
+    maybe (throwIO NoPreviousRequest) return mbQ
+
 --
 -- | Handle the response coming back from the server. This function
 -- hands control to a handler function you supply, passing you the
@@ -440,8 +449,9 @@ getHeadersFull c q =
 -}
 receiveResponse :: Connection -> (Response -> InputStream ByteString -> IO β) -> IO β
 receiveResponse c handler = do
+    q  <- previousRequest c
     p  <- readResponseHeader i
-    i' <- readResponseBody p i
+    i' <- readResponseBody q p i
 
     x  <- handler p i'
 
@@ -462,12 +472,13 @@ receiveResponse c handler = do
 -}
 receiveResponseRaw :: Connection -> (Response -> InputStream ByteString -> IO β) -> IO β
 receiveResponseRaw c handler = do
+    q  <- previousRequest c
     p  <- readResponseHeader i
     let p' = p {
         pContentEncoding = Identity
     }
 
-    i' <- readResponseBody p' i
+    i' <- readResponseBody q p' i
 
     x  <- handler p i'
 
