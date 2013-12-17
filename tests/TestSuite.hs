@@ -630,7 +630,6 @@ testRepeatedHeadResponse =
         sendRequest c q2 emptyBody
 
         let checkResponse size = receiveResponse c $ \p i1 -> do
-                print p
                 let hlen = getHeader p "Content-Length"
                 assertEqual "Size should be equal to the parameter!"
                             (Just size) hlen
