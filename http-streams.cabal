@@ -80,7 +80,7 @@ test-suite           check
                      MonadCatchIO-transformers,
                      aeson-pretty,
                      attoparsec,
-                     base,
+                     base >= 4.6,
                      directory,
                      blaze-builder,
                      base64-bytestring,

@@ -66,7 +66,8 @@ import Network.Http.Connection (Connection (..))
 import Network.Http.Inconvenience (HttpClientError (..),
                                    TooManyRedirects (..), splitURI)
 import Network.Http.Internal (Request (..), Response (..), EntityBody(..),
-                              composeRequestBytes, lookupHeader)
+                              composeRequestBytes, lookupHeader,
+                              removeHeader)
 import Network.Http.ResponseParser (readDecimal, readResponseHeader)
 
 
@@ -94,6 +95,7 @@ suite = do
         testDevoidOfContent
         testCompressedResponse
         testRepeatedResponseHeaders
+        testRepeatedHeadResponse
 
     describe "Expectation handling" $ do
         testExpectationContinue
@@ -610,6 +612,37 @@ testRepeatedResponseHeaders =
         handler :: Response -> InputStream ByteString -> IO ()
         handler r _ = do
             assertEqual "Invalid response headers" (Just "stone=diamond,metal=tungsten") (getHeader r "Set-Cookie")
+
+-- This basically tests that we ignore the body of *all* responses to
+-- HEAD requests, even if they contain a @Content-Length@.
+testRepeatedHeadResponse =
+    it "repeated responses to HEAD reqs are parsed correctly" $ do
+        c <- openConnection "localhost" localPort
+
+        let url s = S.concat ["/head/", s]
+            -- Snap doesn't like Accept-Encoding with HEAD reqs.
+            noEnc q = q{qHeaders = removeHeader (qHeaders q) "Accept-Encoding"}
+
+        q1 <- noEnc <$> buildRequest (http HEAD (url "123"))
+        q2 <- noEnc <$> buildRequest (http HEAD (url "456"))
+
+        sendRequest c q1 emptyBody
+        sendRequest c q2 emptyBody
+
+        let checkResponse size = receiveResponse c $ \p i1 -> do
+                print p
+                let hlen = getHeader p "Content-Length"
+                assertEqual "Size should be equal to the parameter!"
+                            (Just size) hlen
+
+                (i2, getCount) <- Streams.countInput i1
+                Streams.skipToEof i2
+
+                len <- getCount
+                assertEqual "Body should be empty!" 0 len
+
+        checkResponse "123"
+        checkResponse "456"
 
 {-
     From http://stackoverflow.com/questions/6147435/is-there-an-assertexception-in-any-of-the-haskell-test-frameworks

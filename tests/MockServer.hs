@@ -34,6 +34,7 @@ import Snap.Core
 import Snap.Http.Server
 import Snap.Util.FileServe
 import System.IO (hFlush, hPutStrLn, stderr)
+import Text.Read (readMaybe)
 
 import Network.Http.Client (Hostname, Port)
 
@@ -86,6 +87,7 @@ routeRequests =
              ("loop", serveRedirectEndlessly),
              ("empty", serveWithoutContent),
              ("postbox", method POST handlePostMethod),
+             ("head/:size", method HEAD handleHeadMethod),
              ("size", handleSizeRequest),
              ("api", handleRestfulRequest),
              ("cookies", serveRepeatedResponseHeaders)]
@@ -214,6 +216,15 @@ handlePostMethod = do
     b' <- readRequestBody 1024
     writeLBS b'
 
+handleHeadMethod :: Snap ()
+handleHeadMethod = do
+    mbSize <- (readMaybe . S.unpack =<<) <$> getParam "size"
+    case mbSize of
+      Nothing -> error "Malformed request"
+      Just size -> do
+        modifyResponse $ setResponseStatus 200 "OK"
+                       . setContentLength size
+                       . setContentType "text/plain"
 
 handlePutWithExpectation :: Snap ()
 handlePutWithExpectation = do
